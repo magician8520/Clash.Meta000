@@ -12,6 +12,7 @@ import (
 
 const (
 	defaultURLTestTimeout = time.Second * 5
+	defaultURLTestURL     = "https://www.gstatic.com/generate_204"
 )
 
 type HealthCheckOption struct {
@@ -31,16 +32,12 @@ type HealthCheck struct {
 func (hc *HealthCheck) process() {
 	ticker := time.NewTicker(time.Duration(hc.interval) * time.Second)
 
-	go func() {
-		time.Sleep(30 * time.Second)
-		hc.check()
-	}()
-
+	go hc.check()
 	for {
 		select {
 		case <-ticker.C:
 			now := time.Now().Unix()
-			if !hc.lazy || now-hc.lastTouch.Load() < int64(hc.interval) {
+			if !suspended && !hc.lazy || now-hc.lastTouch.Load() < int64(hc.interval) {
 				hc.check()
 			}
 		case <-hc.done:
@@ -63,7 +60,7 @@ func (hc *HealthCheck) touch() {
 }
 
 func (hc *HealthCheck) check() {
-	b, _ := batch.New[bool](context.Background(), batch.WithConcurrencyNum[bool](10))
+	b, _ := batch.New[bool](context.Background())
 	for _, proxy := range hc.proxies {
 		p := proxy
 		b.Go(p.Name(), func() (bool, error) {
@@ -81,12 +78,16 @@ func (hc *HealthCheck) close() {
 }
 
 func NewHealthCheck(proxies []C.Proxy, url string, interval uint, lazy bool) *HealthCheck {
+	if url == "" {
+		url = defaultURLTestURL
+	}
+
 	return &HealthCheck{
 		proxies:   proxies,
 		url:       url,
 		interval:  interval,
 		lazy:      lazy,
 		lastTouch: atomic.NewInt64(0),
-		done:      make(chan struct{}, 1),
+		done:      make(chan struct{}, 8),
 	}
 }
